@@ -27,12 +27,6 @@ let create ?auth ?host:(host="127.0.0.1") ?tls_config mode =
 
 let buffer_size = 1024
 
-let rec read ic =
-    Lwt_io.read ~count:buffer_size ic >>= fun s ->
-    if String.length s = buffer_size then
-        read ic >|= fun s' -> s ^ s'
-    else Lwt.return s
-
 let rec write oc = function
     | Nil -> Lwt_io.write oc "*-1\r\n"
     | Error e ->
@@ -57,30 +51,30 @@ let rec write oc = function
         Lwt_io.write oc s >>= fun () ->
         Lwt_io.write oc "\r\n"
 
-let rec aux srv authenticated callback ic oc r =
-    Lwt_io.read ~count:buffer_size ic >>= fun s ->
-    if String.length s <= 0 then
+let rec aux srv authenticated callback ic oc buf r =
+    Lwt_io.read_into ic buf 0 buffer_size >>= fun n ->
+    if n <= 0 then
         Lwt.return_unit
     else
-    let () = ignore (Reader.feed r s) in
+    let () = ignore (Reader.feed r (Bytes.sub buf 0 n |> Bytes.to_string)) in
     match Reader.get_reply r with
     | None ->
-        aux srv authenticated callback ic oc r
+        aux srv authenticated callback ic oc buf r
     | Some (Array a) ->
         if authenticated then
             (callback srv a >>= function
             | Some res ->
                 write oc res >>= fun () ->
-                aux srv true callback ic oc r
+                aux srv true callback ic oc buf r
             | None ->
                 Lwt.return_unit)
         else begin match a with
             | [| (String "AUTH"|String "auth"); String x |] when Some x = srv.s_auth ->
                 write oc (Status "OK") >>= fun () ->
-                aux srv true callback ic oc r
+                aux srv true callback ic oc buf r
             | _ ->
                 write oc (Error "NOAUTH Authentication Required") >>= fun _ ->
-                aux srv false callback ic oc r
+                aux srv false callback ic oc buf r
         end
     | _ ->
         write oc (Error "NOCOMMAND Invalid Command")
@@ -88,7 +82,8 @@ let rec aux srv authenticated callback ic oc r =
 let rec handle srv callback flow ic oc =
     let r = Reader.create () in
     Lwt.catch (fun () ->
-        aux srv (srv.s_auth = None) callback ic oc r)
+        let buf = Bytes.make buffer_size ' ' in
+        aux srv (srv.s_auth = None) callback ic oc buf r)
     (fun _ ->
         Lwt_unix.yield ())
 
