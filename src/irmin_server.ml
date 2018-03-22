@@ -33,6 +33,30 @@ let rec read ic =
         read ic >|= fun s' -> s ^ s'
     else Lwt.return s
 
+let rec write oc = function
+    | Nil -> Lwt_io.write oc "*-1\r\n"
+    | Error e ->
+        Lwt_io.write oc "-" >>= fun () ->
+        Lwt_io.write oc e >>= fun () ->
+        Lwt_io.write oc "\r\n"
+    | Integer i ->
+        Lwt_io.write oc ":" >>= fun () ->
+        Lwt_io.write oc (Printf.sprintf "%Ld\r\n" i)
+    | String s ->
+        Lwt_io.write oc (Printf.sprintf "$%d\r\n" (String.length s)) >>= fun () ->
+        Lwt_io.write oc s >>= fun () ->
+        Lwt_io.write oc "\r\n"
+    | Array arr ->
+        Lwt_io.write oc (Printf.sprintf "*%d\r\n" (Array.length arr)) >>= fun () ->
+        let rec write_all arr i =
+            if i >= Array.length arr then Lwt_io.write oc "\r\n"
+            else write oc arr.(i) >>= fun () -> write_all arr (i + 1)
+        in write_all arr 0
+    | Status s ->
+        Lwt_io.write oc "+" >>= fun () ->
+        Lwt_io.write oc s >>= fun () ->
+        Lwt_io.write oc "\r\n"
+
 let rec aux srv authenticated callback ic oc r =
     Lwt_io.read ~count:buffer_size ic >>= fun s ->
     if String.length s <= 0 then
