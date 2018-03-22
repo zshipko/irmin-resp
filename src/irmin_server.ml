@@ -70,22 +70,20 @@ let rec aux srv authenticated callback ic oc r =
         if authenticated then
             (callback srv a >>= function
             | Some res ->
-                Lwt_io.write oc (encode_string res) >>= fun _ ->
+                write oc res >>= fun () ->
                 aux srv true callback ic oc r
             | None ->
-                print_endline "B";
                 Lwt.return_unit)
         else begin match a with
             | [| (String "AUTH"|String "auth"); String x |] when Some x = srv.s_auth ->
-                Lwt_io.write oc (encode_string (Status "OK")) >>= fun _ ->
+                write oc (Status "OK") >>= fun () ->
                 aux srv true callback ic oc r
             | _ ->
-                Lwt_io.write oc (encode_string (Error "NOAUTH Authentication Required"))
-                >>= fun _ -> aux srv false callback ic oc r
+                write oc (Error "NOAUTH Authentication Required") >>= fun _ ->
+                aux srv false callback ic oc r
         end
     | _ ->
-        Lwt_io.write oc (encode_string (Error "NOCOMMAND Invalid Command")) >>= fun _ ->
-        Lwt.return_unit
+        write oc (Error "NOCOMMAND Invalid Command")
 
 let rec handle srv callback flow ic oc =
     let r = Reader.create () in
