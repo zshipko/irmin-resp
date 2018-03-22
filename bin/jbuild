@@ -1,0 +1,8 @@
+(jbuild_version 1)
+
+(executables
+ ((names (main))
+  (public_names (irmin-server))
+  (modules (main))
+  (libraries (irmin-server))
+  (package irmin-server)))
