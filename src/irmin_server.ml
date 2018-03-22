@@ -35,13 +35,12 @@ let rec read ic =
 
 let rec aux srv authenticated callback ic oc r =
     Lwt_io.read ~count:buffer_size ic >>= fun s ->
-    let () =
-        if String.length s > 0
-        then ignore (Reader.feed r s) in
+    if String.length s <= 0 then
+        Lwt.return_unit
+    else
+    let () = ignore (Reader.feed r s) in
     match Reader.get_reply r with
     | None ->
-        aux srv authenticated callback ic oc r
-    | Some v when v = Hiredis.Value.nil ->
         aux srv authenticated callback ic oc r
     | Some (Array a) ->
         if authenticated then
