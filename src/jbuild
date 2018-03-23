@@ -4,4 +4,4 @@
     ((name irmin_server)
      (public_name irmin-server)
      (wrapped false)
-     (libraries (conduit-lwt-unix irmin-unix hiredis))))
+     (libraries (irmin-unix resp-server))))

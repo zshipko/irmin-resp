@@ -5,13 +5,14 @@
   ---------------------------------------------------------------------------*)
 
 open Lwt.Infix
+open Irmin_server
 
 let main =
-    Irmin_server.create (`TCP (`Port 1234)) >>= fun server ->
-    Irmin_server.run server (fun srv args ->
-        Lwt.return (Some (Hiredis.Value.int 9999)))
+  Server.create (`TCP (`Port 1234)) () >>= fun server ->
+  Server.run server callback
 
 let _ = Lwt_main.run main
+
 
 (*---------------------------------------------------------------------------
    Copyright (c) 2018 Zach Shipko
