@@ -7,14 +7,38 @@
 open Lwt.Infix
 open Hiredis
 
+module Store = Irmin_unix.Git.FS.KV(Irmin.Contents.String)
+
 module Data = struct
-  type t = unit
+  type t = Store.repo
 end
 
-let callback db arr =
-  Lwt.return_some (Hiredis.Value.string "testing")
-
 module Server = Resp_server.Make(Resp_server.Auth.String)(Data)
+
+let callback db cmd args =
+  match cmd, args with
+  | "get", [| String key |] ->
+    begin
+      Store.master db >>= fun t ->
+      match Store.Key.of_string key with
+      | Ok key ->
+        (Store.find t key >>= function
+          | Some x -> Lwt.return_some (Value.string x)
+          | None -> Lwt.return_some (Value.error "ERR not found"))
+      | Error (`Msg msg) -> Lwt.return_some (Value.error ("ERR " ^ msg))
+    end
+  | "set", [| String key; String value |] ->
+      begin
+        Store.master db >>= fun t ->
+        match Store.Key.of_string key with
+        | Ok key ->
+            Store.set t ~info:(Irmin_unix.info ~author:"irmin server" "set") key value >>= fun () ->
+            Lwt.return_some (Value.status "OK")
+        | Error (`Msg msg) -> Lwt.return_some (Value.error ("ERR " ^ msg))
+      end
+  | _, _ -> Lwt.return_some (Value.error "ERR invalid command")
+
+
 
 (*---------------------------------------------------------------------------
    Copyright (c) 2018 Zach Shipko
