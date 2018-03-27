@@ -7,47 +7,72 @@
 open Lwt.Infix
 open Hiredis
 
-module Store = Irmin_unix.Git.FS.KV(Irmin.Contents.String)
+module type S = sig
+  module Store: Irmin.S
 
-module Data = struct
-  type t = Store.repo
+  module Data: sig
+    type t = Store.repo
+  end
+
+  module Server: Resp_server.SERVER
+    with module Auth = Resp_server.Auth.String
+    and module Data = Data
+
+  val callback: Data.t -> string -> Hiredis.value array -> Hiredis.value option Lwt.t
 end
 
-module Server = Resp_server.Make(Resp_server.Auth.String)(Data)
+module Make(Store: Irmin.KV) = struct
+  module Store = Store
 
-let callback db cmd args =
-  match cmd, args with
-  | "get", [| String key |] ->
-    begin
-      Store.master db >>= fun t ->
-      match Store.Key.of_string key with
-      | Ok key ->
-        (Store.find t key >>= function
-          | Some x -> Lwt.return_some (Value.string x)
-          | None -> Lwt.return_some Value.nil)
-      | Error (`Msg msg) -> Lwt.return_some (Value.error ("ERR " ^ msg))
-    end
-  | "set", [| String key; String value |] ->
+  module Data = struct
+    type t = Store.repo
+  end
+
+  module Server = Resp_server.Make(Resp_server.Auth.String)(Data)
+
+  let to_string value =
+    let buffer = Buffer.create 1024 in
+    let fmt = Format.formatter_of_buffer buffer in
+    Store.Contents.pp fmt value;
+    Buffer.contents buffer
+
+  let callback db cmd args =
+    let error msg =
+      Lwt.return_some (Value.error ("ERR " ^ msg)) in
+    match cmd, args with
+    | "get", [| String key |] ->
       begin
         Store.master db >>= fun t ->
         match Store.Key.of_string key with
         | Ok key ->
-            Store.set t ~info:(Irmin_unix.info ~author:"irmin server" "set") key value >>= fun () ->
-            Lwt.return_some (Value.status "OK")
+          (Store.find t key >>= function
+            | Some x -> Lwt.return_some (Value.string (to_string x))
+            | None -> Lwt.return_some Value.nil)
         | Error (`Msg msg) -> Lwt.return_some (Value.error ("ERR " ^ msg))
       end
-  | "remove", [| String key |] ->
-      begin
-        Store.master db >>= fun t ->
-        match Store.Key.of_string key with
-        | Ok key ->
-            Store.remove t ~info:(Irmin_unix.info ~author:"irmin server" "del") key >>= fun () ->
-            Lwt.return_some (Value.status "OK")
-        | Error (`Msg msg) -> Lwt.return_some (Value.error ("ERR " ^ msg))
-      end
-  | _, _ -> Lwt.return_some (Value.error "ERR invalid command")
-
-
+    | "set", [| String key; String value |] ->
+        begin
+          Store.master db >>= fun t ->
+          match Store.Key.of_string key with
+          | Ok key ->
+              (match Store.Contents.of_string value with
+              | Ok value ->
+                  Store.set t ~info:(Irmin_unix.info ~author:"irmin server" "set") key value >>= fun () ->
+                  Lwt.return_some (Value.status "OK")
+              | Error (`Msg msg) -> error msg)
+          | Error (`Msg msg) -> error msg
+        end
+    | "remove", [| String key |] ->
+        begin
+          Store.master db >>= fun t ->
+          match Store.Key.of_string key with
+          | Ok key ->
+              Store.remove t ~info:(Irmin_unix.info ~author:"irmin server" "del") key >>= fun () ->
+              Lwt.return_some (Value.status "OK")
+          | Error (`Msg msg) -> Lwt.return_some (Value.error ("ERR " ^ msg))
+        end
+    | _, _ -> Lwt.return_some (Value.error "ERR invalid command")
+end
 
 (*---------------------------------------------------------------------------
    Copyright (c) 2018 Zach Shipko
