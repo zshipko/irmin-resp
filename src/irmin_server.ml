@@ -36,6 +36,15 @@ let callback db cmd args =
             Lwt.return_some (Value.status "OK")
         | Error (`Msg msg) -> Lwt.return_some (Value.error ("ERR " ^ msg))
       end
+  | "remove", [| String key |] ->
+      begin
+        Store.master db >>= fun t ->
+        match Store.Key.of_string key with
+        | Ok key ->
+            Store.remove t ~info:(Irmin_unix.info ~author:"irmin server" "del") key >>= fun () ->
+            Lwt.return_some (Value.status "OK")
+        | Error (`Msg msg) -> Lwt.return_some (Value.error ("ERR " ^ msg))
+      end
   | _, _ -> Lwt.return_some (Value.error "ERR invalid command")
 
 
