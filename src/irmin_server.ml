@@ -24,7 +24,7 @@ let callback db cmd args =
       | Ok key ->
         (Store.find t key >>= function
           | Some x -> Lwt.return_some (Value.string x)
-          | None -> Lwt.return_some (Value.error "ERR not found"))
+          | None -> Lwt.return_some Value.nil)
       | Error (`Msg msg) -> Lwt.return_some (Value.error ("ERR " ^ msg))
     end
   | "set", [| String key; String value |] ->
