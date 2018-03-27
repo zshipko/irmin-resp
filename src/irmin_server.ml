@@ -14,7 +14,7 @@ end
 let callback db arr =
   Lwt.return_some (Hiredis.Value.string "testing")
 
-module Server = Resp_server.Make(Data)
+module Server = Resp_server.Make(Resp_server.Auth.String)(Data)
 
 (*---------------------------------------------------------------------------
    Copyright (c) 2018 Zach Shipko
