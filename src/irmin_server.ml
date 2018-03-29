@@ -30,11 +30,15 @@ module Make(Store: Irmin.KV) = struct
     type t = Store.repo
 
     type client = {
-      queue: Hiredis.value array Queue.t;
+      mutable in_multi: bool;
+      mutable queue: (string * Hiredis.value array) list;
+      mutable txn: Store.t option;
     }
 
     let new_client () = {
-      queue = Queue.create ()
+      in_multi = false;
+      queue = [];
+      txn = None;
     }
   end
 
@@ -46,10 +50,27 @@ module Make(Store: Irmin.KV) = struct
     Store.Contents.pp fmt value;
     Buffer.contents buffer
 
-  let callback db client cmd args =
+  let rec callback db client cmd args =
     let error msg =
       Lwt.return_some (Value.error ("ERR " ^ msg)) in
+    if client.Data.in_multi && cmd <> "exec" && cmd <> "discard" then
+      let () = client.Data.queue <- (cmd, args) :: client.Data.queue in
+      Lwt.return_some (Value.status "OK")
+    else
     match cmd, args with
+    | "multi", [||] ->
+        client.Data.in_multi <- true;
+        Lwt.return_some (Value.status "OK")
+    | "exec", [||] ->
+        Lwt_list.filter_map_s (fun (cmd, args) ->
+          callback db client cmd args) (List.rev client.Data.queue) >>= fun l ->
+        client.Data.queue <- [];
+        client.Data.in_multi <- false;
+        Lwt.return_some (Value.array (Array.of_list l))
+    | "discard", [||] ->
+        client.Data.queue <- [];
+        client.Data.in_multi <- false;
+        Lwt.return_some (Value.status "OK")
     | "get", [| String key |] ->
       begin
         Store.master db >>= fun t ->
