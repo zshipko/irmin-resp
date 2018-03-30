@@ -53,6 +53,7 @@ module Make(Store: Irmin.KV) = struct
     let buffer = Buffer.create 1024 in
     let fmt = Format.formatter_of_buffer buffer in
     Store.Contents.pp fmt value;
+    Format.pp_print_flush fmt ();
     Buffer.contents buffer
 
   let rec callback db client cmd args =
@@ -73,14 +74,14 @@ module Make(Store: Irmin.KV) = struct
         client.Data.in_multi <- true;
         Lwt.return_some (Value.status "OK")
     | "exec", [||] ->
+        client.Data.in_multi <- false;
         Lwt_list.filter_map_s (fun (cmd, args) ->
           callback db client cmd args) (List.rev client.Data.queue) >>= fun l ->
         client.Data.queue <- [];
-        client.Data.in_multi <- false;
         Lwt.return_some (Value.array (Array.of_list l))
     | "discard", [||] ->
-        client.Data.queue <- [];
         client.Data.in_multi <- false;
+        client.Data.queue <- [];
         client.Data.txn <- None;
         Lwt.return_some (Value.status "OK")
     | "get", [| String key |] ->
