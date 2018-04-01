@@ -20,12 +20,21 @@ module type S = sig
     with module Auth = Resp_server.Auth.String
     and module Data = Data
 
-  val callback:
+  val create :
+    ?auth: Server.Auth.t ->
+    ?host: string ->
+    ?tls_config: Conduit_lwt_unix.tls_server_key ->
+    Conduit_lwt_unix.server ->
     Data.t ->
-    Data.client ->
-    string ->
-    Hiredis.value array ->
-    Hiredis.value option Lwt.t
+    Server.t Lwt.t
+
+  val run :
+    ?backlog: int ->
+    ?timeout: int ->
+    ?stop: unit Lwt.t ->
+    ?on_exn: (exn -> unit) ->
+    Server.t ->
+    unit Lwt.t
 end
 
 module Make(Store: Irmin.KV) = struct
@@ -49,6 +58,8 @@ module Make(Store: Irmin.KV) = struct
 
   module Server = Resp_server.Make(Resp_server.Auth.String)(Data)
 
+  (* Internal utility functions *)
+
   let to_string value =
     let buffer = Buffer.create 1024 in
     let fmt = Format.formatter_of_buffer buffer in
@@ -56,35 +67,58 @@ module Make(Store: Irmin.KV) = struct
     Format.pp_print_flush fmt ();
     Buffer.contents buffer
 
-  let rec callback db client cmd args =
-    let error msg =
-      Lwt.return_some (Value.error ("ERR " ^ msg)) in
-    let master db client =
-      match client.Data.txn with
-      | Some t -> Lwt.return t
-      | None -> Store.master db in
+  let master db client =
+    match client.Data.txn with
+    | Some t -> Lwt.return t
+    | None -> Store.master db
+
+  let error msg =
+    Lwt.return_some (Value.error ("ERR " ^ msg))
+
+  let ok = Value.status "OK"
+
+  let wrap f db client cmd args =
     if client.Data.in_multi && cmd <> "exec" && cmd <> "discard" then
       let () = client.Data.queue <- (cmd, args) :: client.Data.queue in
-      Lwt.return_some (Value.status "OK")
+      Lwt.return_some ok
     else
-    match cmd, args with
-    | "multi", [||] ->
-        Store.master db >>= fun t ->
-        client.Data.txn <- Some t;
-        client.Data.in_multi <- true;
-        Lwt.return_some (Value.status "OK")
-    | "exec", [||] ->
-        client.Data.in_multi <- false;
-        Lwt_list.filter_map_s (fun (cmd, args) ->
-          callback db client cmd args) (List.rev client.Data.queue) >>= fun l ->
-        client.Data.queue <- [];
-        Lwt.return_some (Value.array (Array.of_list l))
-    | "discard", [||] ->
-        client.Data.in_multi <- false;
-        client.Data.queue <- [];
-        client.Data.txn <- None;
-        Lwt.return_some (Value.status "OK")
-    | "get", [| String key |] ->
+      f db client cmd args
+
+  (* Commands *)
+
+  let rec _multi db client cmd args =
+    Store.master db >>= fun t ->
+    client.Data.txn <- Some t;
+    client.Data.in_multi <- true;
+    Lwt.return_some ok
+
+  and _exec db client cmd args =
+    match args with
+    | [| |] ->
+      client.Data.in_multi <- false;
+      Lwt_list.filter_map_s (fun (cmd, args) ->
+        let f = match cmd with
+        | "get" -> _get
+        | "set" -> _set
+        | "remove" -> _remove
+        | _ -> fun db client cmd args -> Lwt.return_none in
+        f db client cmd args) (List.rev client.Data.queue) >>= fun l ->
+      client.Data.queue <- [];
+      Lwt.return_some (Value.array (Array.of_list l))
+    | _ -> error "Invalid arguments"
+
+  and _discard db client cmd args =
+    match args with
+    | [| |] ->
+      client.Data.in_multi <- false;
+      client.Data.queue <- [];
+      client.Data.txn <- None;
+      Lwt.return_some ok
+    | _ -> error "Invalid arguments"
+
+  and _get db client cmd args =
+    match args with
+    | [| String key |] ->
       begin
         master db client >>= fun t ->
         match Store.Key.of_string key with
@@ -94,8 +128,12 @@ module Make(Store: Irmin.KV) = struct
             | None -> Lwt.return_some Value.nil)
         | Error (`Msg msg) -> Lwt.return_some (Value.error ("ERR " ^ msg))
       end
-    | "set", [| String key; String value |] ->
-        begin
+    | _ -> error "Invalid arguments"
+
+  and _set db client cmd args =
+    match args with
+    | [| String key; String value |] ->
+      begin
           master db client >>= fun t ->
           match Store.Key.of_string key with
           | Ok key ->
@@ -105,17 +143,33 @@ module Make(Store: Irmin.KV) = struct
                   Lwt.return_some (Value.status "OK")
               | Error (`Msg msg) -> error msg)
           | Error (`Msg msg) -> error msg
-        end
-    | "remove", [| String key |] ->
-        begin
-          master db client >>= fun t ->
-          match Store.Key.of_string key with
-          | Ok key ->
-              Store.remove t ~info:(Irmin_unix.info ~author:"irmin server" "del") key >>= fun () ->
-              Lwt.return_some (Value.status "OK")
-          | Error (`Msg msg) -> Lwt.return_some (Value.error ("ERR " ^ msg))
-        end
-    | _, _ -> Lwt.return_some (Value.error "ERR invalid command")
+      end
+    | _ -> error "Invalid arguments"
+
+  and _remove db client cmd args =
+    match args with
+    | [| String key |] ->
+      begin
+        master db client >>= fun t ->
+        match Store.Key.of_string key with
+        | Ok key ->
+            Store.remove t ~info:(Irmin_unix.info ~author:"irmin server" "del") key >>= fun () ->
+            Lwt.return_some (Value.status "OK")
+        | Error (`Msg msg) -> Lwt.return_some (Value.error ("ERR " ^ msg))
+      end
+    | _ -> error "Invalid arguments"
+
+  let commands = [
+    "multi", _multi;
+    "exec", _exec;
+    "discard", _discard;
+    "get", wrap _get;
+    "set", wrap _set;
+    "remove", wrap _remove;
+  ]
+
+  let create = Server.create ~commands
+  let run = Server.run
 end
 
 (*---------------------------------------------------------------------------
