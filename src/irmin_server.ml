@@ -101,6 +101,7 @@ module Make(Store: Irmin.KV) = struct
         | "get" -> _get
         | "set" -> _set
         | "remove" -> _remove
+        | "list" -> _list
         | _ -> fun db client cmd args -> Lwt.return_none in
         f db client cmd args) (List.rev client.Data.queue) >>= fun l ->
       client.Data.queue <- [];
@@ -155,7 +156,30 @@ module Make(Store: Irmin.KV) = struct
         | Ok key ->
             Store.remove t ~info:(Irmin_unix.info ~author:"irmin server" "del") key >>= fun () ->
             Lwt.return_some (Value.status "OK")
-        | Error (`Msg msg) -> Lwt.return_some (Value.error ("ERR " ^ msg))
+        | Error (`Msg msg) -> error msg
+      end
+    | _ -> error "Invalid arguments"
+
+  and _list db client cmd args =
+    match args with
+    | [| String kind; String key; |] ->
+      begin
+        master db client >>= fun t ->
+        match Store.Key.of_string key with
+        | Ok key ->
+            let buf = Buffer.create 1024 in
+            let fmt = Format.formatter_of_buffer buf in
+            Store.list t key >>=
+            Lwt_list.filter_map_s (fun (s, b) ->
+              match b, kind with
+              | `Contents, "keys" | `Contents, "all" ->
+                Store.Key.pp_step fmt s;
+                Format.pp_print_flush fmt ();
+                Lwt.return_some (String (Buffer.contents buf))
+              | `Node, "dirs" | `Node, "all" -> Lwt.return_none
+              | _ -> Lwt.return_none) >>= fun l ->
+            Lwt.return_some (Hiredis.Value.array (Array.of_list l))
+        | Error (`Msg msg) -> error msg
       end
     | _ -> error "Invalid arguments"
 
@@ -163,9 +187,11 @@ module Make(Store: Irmin.KV) = struct
     "multi", _multi;
     "exec", _exec;
     "discard", _discard;
+
     "get", wrap _get;
     "set", wrap _set;
     "remove", wrap _remove;
+    "list", wrap _list;
   ]
 
   let create = Server.create ~commands
