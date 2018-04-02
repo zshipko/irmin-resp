@@ -4,5 +4,5 @@
  ((names (main))
   (public_names (irmin-server))
   (modules (main))
-  (libraries (irmin-server))
+  (libraries (irmin-server cmdliner))
   (package irmin-server)))
