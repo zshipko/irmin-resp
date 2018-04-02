@@ -5,8 +5,8 @@ open Cmdliner
 let select_store: string -> (module Irmin.KV_MAKER) = function
   | "http" -> (module Irmin_unix.Http.KV)
   | "fs" -> (module Irmin_unix.FS.KV)
-  | "git-mem" -> (module Irmin_unix.Git.Mem.KV)
-  | "git-fs" | _ -> (module Irmin_unix.Git.FS.KV)
+  | "git-mem" | "mem" -> (module Irmin_unix.Git.Mem.KV)
+  | "git-fs" | "git" | _ -> (module Irmin_unix.Git.FS.KV)
 
 let select_contents: string -> (module Irmin.Contents.S) = function
   | "cstruct" -> (module Irmin.Contents.Cstruct)
@@ -17,12 +17,16 @@ let store_type s c: (module S) =
   let (module T) = select_contents c in
   (module Make(MakeStore(T)))
 
+let on_exn exc =
+  print_string "Error: ";
+  print_endline (Printexc.to_string exc)
+
 let main addr port root store contents =
   let (module Server) = store_type store contents in
   let cfg = Irmin_git.config root in
   Server.Store.Repo.v cfg >>= fun repo ->
   Server.create ~host:addr (`TCP (`Port port)) repo >>= fun server ->
-  Server.run server
+  Server.run ~on_exn server
 
 let server addr port root store contents =
   let store = String.lowercase_ascii store in
