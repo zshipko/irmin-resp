@@ -2,7 +2,7 @@ irmin-server — A lightweight server for Irmin
 -------------------------------------------------------------------------------
 %%VERSION%%
 
-irmin-server is TODO
+irmin-server is a Redis protocol server for [Irmin](https://github.com/mirage/irmin) using [resp-server](https://github.com/zshipko/resp-server)
 
 irmin-server is distributed under the ISC license.
 
@@ -23,7 +23,7 @@ The documentation and API reference is generated from the source
 interfaces. It can be consulted [online][doc] or via `odig doc
 irmin-server`.
 
-[doc]: https://github.com/zshipko/irmin-server/doc
+[doc]: https://github.com/zshipko/irmin-server
 
 ## Tests
 
