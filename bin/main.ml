@@ -5,7 +5,8 @@ open Cmdliner
 let select_store: string -> (module Irmin.KV_MAKER) = function
   | "http" -> (module Irmin_unix.Http.KV)
   | "fs" -> (module Irmin_unix.FS.KV)
-  | "git-mem" | "mem" -> (module Irmin_unix.Git.Mem.KV)
+  | "mem" -> (module Irmin_mem.KV)
+  | "git-mem" -> (module Irmin_unix.Git.Mem.KV)
   | "git-fs" | "git" | _ -> (module Irmin_unix.Git.FS.KV)
 
 let select_contents: string -> (module Irmin.Contents.S) = function
