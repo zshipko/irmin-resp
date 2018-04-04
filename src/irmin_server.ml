@@ -194,7 +194,7 @@ module Make(Store: Irmin.KV) = struct
     "list", wrap _list;
   ]
 
-  let create = Server.create ~commands
+  let create = Server.create ~commands ?default:None
   let run = Server.run
 end
 
