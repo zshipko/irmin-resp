@@ -20,6 +20,10 @@ module type S = sig
     with module Auth = Resp_server.Auth.String
     and module Data = Data
 
+  val ok: Hiredis.value option Lwt.t
+  val error: string -> Hiredis.value option Lwt.t
+  val branch: Data.t -> Data.client -> Store.t Lwt.t
+
   val create :
     ?auth: Server.Auth.t ->
     ?host: string ->
@@ -77,7 +81,7 @@ module Make(Store: Irmin.KV) = struct
     Format.pp_print_flush fmt ();
     Buffer.contents buffer
 
-  let master db client =
+  let branch db client =
     match client.Data.txn with
     | Some t -> Lwt.return t
     | None -> Store.master db
@@ -85,22 +89,26 @@ module Make(Store: Irmin.KV) = struct
   let error msg =
     Lwt.return_some (Value.error ("ERR " ^ msg))
 
-  let ok = Value.status "OK"
+  let ok = Lwt.return_some (Value.status "OK")
 
   let wrap f db client cmd args =
     if client.Data.in_multi && cmd <> "exec" && cmd <> "discard" then
       let () = client.Data.queue <- (cmd, args) :: client.Data.queue in
-      Lwt.return_some ok
+      ok
     else
       f db client cmd args
 
   (* Commands *)
 
   let rec _multi db client cmd args =
-    Store.master db >>= fun t ->
+    (match args with
+    | [| String branch |] ->
+        Store.of_branch db branch
+    | _ ->
+        Store.master db) >>= fun t ->
     client.Data.txn <- Some t;
     client.Data.in_multi <- true;
-    Lwt.return_some ok
+    ok
 
   and _exec db client cmd args =
     match args with
@@ -124,14 +132,14 @@ module Make(Store: Irmin.KV) = struct
       client.Data.in_multi <- false;
       client.Data.queue <- [];
       client.Data.txn <- None;
-      Lwt.return_some ok
+      ok
     | _ -> error "Invalid arguments"
 
   and _get db client cmd args =
     match args with
     | [| String key |] ->
       begin
-        master db client >>= fun t ->
+        branch db client >>= fun t ->
         match Store.Key.of_string key with
         | Ok key ->
           (Store.find t key >>= function
@@ -145,7 +153,7 @@ module Make(Store: Irmin.KV) = struct
     match args with
     | [| String key; String value |] ->
       begin
-          master db client >>= fun t ->
+          branch db client >>= fun t ->
           match Store.Key.of_string key with
           | Ok key ->
               (match Store.Contents.of_string value with
@@ -161,7 +169,7 @@ module Make(Store: Irmin.KV) = struct
     match args with
     | [| String key |] ->
       begin
-        master db client >>= fun t ->
+        branch db client >>= fun t ->
         match Store.Key.of_string key with
         | Ok key ->
             Store.remove t ~info:(Irmin_unix.info ~author:"irmin server" "del") key >>= fun () ->
@@ -174,7 +182,7 @@ module Make(Store: Irmin.KV) = struct
     match args with
     | [| String kind; String key; |] ->
       begin
-        master db client >>= fun t ->
+        branch db client >>= fun t ->
         match Store.Key.of_string key with
         | Ok key ->
             let buf = Buffer.create 1024 in

@@ -11,6 +11,10 @@ module type S = sig
     with module Auth = Resp_server.Auth.String
     and module Data = Data
 
+  val ok: Hiredis.value option Lwt.t
+  val error: string -> Hiredis.value option Lwt.t
+  val branch: Data.t -> Data.client -> Store.t Lwt.t
+
   val create :
     ?auth: Server.Auth.t ->
     ?host: string ->
