@@ -28,6 +28,16 @@ module type S = sig
     Data.t ->
     Server.t Lwt.t
 
+  val create_custom :
+    ?auth: Server.Auth.t ->
+    ?default: Server.command ->
+    ?commands: (string * Server.command) list ->
+    ?host: string ->
+    ?tls_config: Conduit_lwt_unix.tls_server_key ->
+    Conduit_lwt_unix.server ->
+    Data.t ->
+    Server.t Lwt.t
+
   val run :
     ?backlog: int ->
     ?timeout: int ->
@@ -195,6 +205,7 @@ module Make(Store: Irmin.KV) = struct
   ]
 
   let create = Server.create ~commands ?default:None
+  let create_custom = Server.create
   let run = Server.run
 end
 

@@ -19,6 +19,16 @@ module type S = sig
     Data.t ->
     Server.t Lwt.t
 
+  val create_custom :
+    ?auth: Server.Auth.t ->
+    ?default: Server.command ->
+    ?commands: (string * Server.command) list ->
+    ?host: string ->
+    ?tls_config: Conduit_lwt_unix.tls_server_key ->
+    Conduit_lwt_unix.server ->
+    Data.t ->
+    Server.t Lwt.t
+
   val run :
     ?backlog: int ->
     ?timeout: int ->
