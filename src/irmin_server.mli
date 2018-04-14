@@ -1,7 +1,7 @@
 module type S = sig
   module Store: Irmin.S
 
-  module Data: sig
+  module Backend: sig
     type t = Store.repo
     type client
     val new_client: unit -> client
@@ -9,18 +9,18 @@ module type S = sig
 
   module Server: Resp_server.SERVER
     with module Auth = Resp_server.Auth.String
-    and module Data = Data
+    and module Backend = Backend
 
   val ok: Hiredis.value option Lwt.t
   val error: string -> Hiredis.value option Lwt.t
-  val branch: Data.t -> Data.client -> Store.t Lwt.t
+  val branch: Backend.t -> Backend.client -> Store.t Lwt.t
 
   val create :
     ?auth: Server.Auth.t ->
     ?host: string ->
     ?tls_config: Conduit_lwt_unix.tls_server_key ->
     Conduit_lwt_unix.server ->
-    Data.t ->
+    Backend.t ->
     Server.t Lwt.t
 
   val create_custom :
@@ -30,7 +30,7 @@ module type S = sig
     ?host: string ->
     ?tls_config: Conduit_lwt_unix.tls_server_key ->
     Conduit_lwt_unix.server ->
-    Data.t ->
+    Backend.t ->
     Server.t Lwt.t
 
   val run :
@@ -42,5 +42,5 @@ module type S = sig
     unit Lwt.t
 end
 
-module Make(I: Irmin.KV): S with module Store = I and type Data.t = I.repo
+module Make(I: Irmin.KV): S with module Store = I and type Backend.t = I.repo
 

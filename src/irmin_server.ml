@@ -10,7 +10,7 @@ open Hiredis
 module type S = sig
   module Store: Irmin.S
 
-  module Data: sig
+  module Backend: sig
     type t = Store.repo
     type client
     val new_client: unit -> client
@@ -18,18 +18,18 @@ module type S = sig
 
   module Server: Resp_server.SERVER
     with module Auth = Resp_server.Auth.String
-    and module Data = Data
+    and module Backend = Backend
 
   val ok: Hiredis.value option Lwt.t
   val error: string -> Hiredis.value option Lwt.t
-  val branch: Data.t -> Data.client -> Store.t Lwt.t
+  val branch: Backend.t -> Backend.client -> Store.t Lwt.t
 
   val create :
     ?auth: Server.Auth.t ->
     ?host: string ->
     ?tls_config: Conduit_lwt_unix.tls_server_key ->
     Conduit_lwt_unix.server ->
-    Data.t ->
+    Backend.t ->
     Server.t Lwt.t
 
   val create_custom :
@@ -39,7 +39,7 @@ module type S = sig
     ?host: string ->
     ?tls_config: Conduit_lwt_unix.tls_server_key ->
     Conduit_lwt_unix.server ->
-    Data.t ->
+    Backend.t ->
     Server.t Lwt.t
 
   val run :
@@ -54,7 +54,7 @@ end
 module Make(Store: Irmin.KV) = struct
   module Store = Store
 
-  module Data = struct
+  module Backend = struct
     type t = Store.repo
 
     type client = {
@@ -70,7 +70,7 @@ module Make(Store: Irmin.KV) = struct
     }
   end
 
-  module Server = Resp_server.Make(Resp_server.Auth.String)(Data)
+  module Server = Resp_server.Make(Resp_server.Auth.String)(Backend)
 
   (* Internal utility functions *)
 
@@ -82,7 +82,7 @@ module Make(Store: Irmin.KV) = struct
     Buffer.contents buffer
 
   let branch db client =
-    match client.Data.txn with
+    match client.Backend.txn with
     | Some t -> Lwt.return t
     | None -> Store.master db
 
@@ -92,8 +92,8 @@ module Make(Store: Irmin.KV) = struct
   let ok = Lwt.return_some (Value.status "OK")
 
   let wrap f db client cmd args =
-    if client.Data.in_multi && cmd <> "exec" && cmd <> "discard" then
-      let () = client.Data.queue <- (cmd, args) :: client.Data.queue in
+    if client.Backend.in_multi && cmd <> "exec" && cmd <> "discard" then
+      let () = client.Backend.queue <- (cmd, args) :: client.Backend.queue in
       ok
     else
       f db client cmd args
@@ -106,14 +106,14 @@ module Make(Store: Irmin.KV) = struct
         Store.of_branch db branch
     | _ ->
         Store.master db) >>= fun t ->
-    client.Data.txn <- Some t;
-    client.Data.in_multi <- true;
+    client.Backend.txn <- Some t;
+    client.Backend.in_multi <- true;
     ok
 
   and _exec db client cmd args =
     match args with
     | [| |] ->
-      client.Data.in_multi <- false;
+      client.Backend.in_multi <- false;
       Lwt_list.filter_map_s (fun (cmd, args) ->
         let f = match cmd with
         | "get" -> _get
@@ -121,17 +121,17 @@ module Make(Store: Irmin.KV) = struct
         | "remove" -> _remove
         | "list" -> _list
         | _ -> fun db client cmd args -> Lwt.return_none in
-        f db client cmd args) (List.rev client.Data.queue) >>= fun l ->
-      client.Data.queue <- [];
+        f db client cmd args) (List.rev client.Backend.queue) >>= fun l ->
+      client.Backend.queue <- [];
       Lwt.return_some (Value.array (Array.of_list l))
     | _ -> error "Invalid arguments"
 
   and _discard db client cmd args =
     match args with
     | [| |] ->
-      client.Data.in_multi <- false;
-      client.Data.queue <- [];
-      client.Data.txn <- None;
+      client.Backend.in_multi <- false;
+      client.Backend.queue <- [];
+      client.Backend.txn <- None;
       ok
     | _ -> error "Invalid arguments"
 
