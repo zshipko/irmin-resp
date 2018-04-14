@@ -20,8 +20,6 @@ module type S = sig
     with module Auth = Resp_server.Auth.String
     and module Backend = Backend
 
-  val ok: Hiredis.value option Lwt.t
-  val error: string -> Hiredis.value option Lwt.t
   val branch: Backend.t -> Backend.client -> Store.t Lwt.t
 
   val create :
@@ -86,15 +84,10 @@ module Make(Store: Irmin.KV) = struct
     | Some t -> Lwt.return t
     | None -> Store.master db
 
-  let error msg =
-    Lwt.return_some (Value.error ("ERR " ^ msg))
-
-  let ok = Lwt.return_some (Value.status "OK")
-
   let wrap f db client cmd args =
     if client.Backend.in_multi && cmd <> "exec" && cmd <> "discard" then
       let () = client.Backend.queue <- (cmd, args) :: client.Backend.queue in
-      ok
+      Server.ok
     else
       f db client cmd args
 
@@ -108,7 +101,7 @@ module Make(Store: Irmin.KV) = struct
         Store.master db) >>= fun t ->
     client.Backend.txn <- Some t;
     client.Backend.in_multi <- true;
-    ok
+    Server.ok
 
   and _exec db client cmd args =
     match args with
@@ -124,7 +117,7 @@ module Make(Store: Irmin.KV) = struct
         f db client cmd args) (List.rev client.Backend.queue) >>= fun l ->
       client.Backend.queue <- [];
       Lwt.return_some (Value.array (Array.of_list l))
-    | _ -> error "Invalid arguments"
+    | _ -> Server.error "Invalid arguments"
 
   and _discard db client cmd args =
     match args with
@@ -132,8 +125,8 @@ module Make(Store: Irmin.KV) = struct
       client.Backend.in_multi <- false;
       client.Backend.queue <- [];
       client.Backend.txn <- None;
-      ok
-    | _ -> error "Invalid arguments"
+      Server.ok
+    | _ -> Server.error "Invalid arguments"
 
   and _get db client cmd args =
     match args with
@@ -147,7 +140,7 @@ module Make(Store: Irmin.KV) = struct
             | None -> Lwt.return_some Value.nil)
         | Error (`Msg msg) -> Lwt.return_some (Value.error ("ERR " ^ msg))
       end
-    | _ -> error "Invalid arguments"
+    | _ -> Server.error "Invalid arguments"
 
   and _set db client cmd args =
     match args with
@@ -160,10 +153,10 @@ module Make(Store: Irmin.KV) = struct
               | Ok value ->
                   Store.set t ~info:(Irmin_unix.info ~author:"irmin server" "set") key value >>= fun () ->
                   Lwt.return_some (Value.status "OK")
-              | Error (`Msg msg) -> error msg)
-          | Error (`Msg msg) -> error msg
+              | Error (`Msg msg) -> Server.error msg)
+          | Error (`Msg msg) -> Server.error msg
       end
-    | _ -> error "Invalid arguments"
+    | _ -> Server.error "Invalid arguments"
 
   and _remove db client cmd args =
     match args with
@@ -174,9 +167,9 @@ module Make(Store: Irmin.KV) = struct
         | Ok key ->
             Store.remove t ~info:(Irmin_unix.info ~author:"irmin server" "del") key >>= fun () ->
             Lwt.return_some (Value.status "OK")
-        | Error (`Msg msg) -> error msg
+        | Error (`Msg msg) -> Server.error msg
       end
-    | _ -> error "Invalid arguments"
+    | _ -> Server.error "Invalid arguments"
 
   and _list db client cmd args =
     match args with
@@ -197,9 +190,9 @@ module Make(Store: Irmin.KV) = struct
               | `Node, "dirs" | `Node, "all" -> Lwt.return_none
               | _ -> Lwt.return_none) >>= fun l ->
             Lwt.return_some (Hiredis.Value.array (Array.of_list l))
-        | Error (`Msg msg) -> error msg
+        | Error (`Msg msg) -> Server.error msg
       end
-    | _ -> error "Invalid arguments"
+    | _ -> Server.error "Invalid arguments"
 
   let commands = [
     "multi", _multi;

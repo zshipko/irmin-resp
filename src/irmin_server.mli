@@ -11,8 +11,6 @@ module type S = sig
     with module Auth = Resp_server.Auth.String
     and module Backend = Backend
 
-  val ok: Hiredis.value option Lwt.t
-  val error: string -> Hiredis.value option Lwt.t
   val branch: Backend.t -> Backend.client -> Store.t Lwt.t
 
   val create :
