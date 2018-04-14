@@ -13,7 +13,7 @@ module type S = sig
   module Backend: sig
     type t = Store.repo
     type client
-    val new_client: unit -> client
+    val new_client: t -> client
   end
 
   module Server: Resp_server.SERVER
@@ -63,7 +63,7 @@ module Make(Store: Irmin.KV) = struct
       mutable txn: Store.t option;
     }
 
-    let new_client () = {
+    let new_client _ctx = {
       in_multi = false;
       queue = [];
       txn = None;

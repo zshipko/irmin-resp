@@ -4,7 +4,7 @@ module type S = sig
   module Backend: sig
     type t = Store.repo
     type client
-    val new_client: unit -> client
+    val new_client: t -> client
   end
 
   module Server: Resp_server.SERVER
