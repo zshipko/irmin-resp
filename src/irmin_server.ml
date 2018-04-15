@@ -20,6 +20,7 @@ module type S = sig
     with module Auth = Resp_server.Auth.String
     and module Backend = Backend
 
+  val commands: (string * Server.command) list
   val branch: Backend.t -> Backend.client -> Store.t Lwt.t
 
   val create :
