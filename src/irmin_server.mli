@@ -1,5 +1,6 @@
 module type S = sig
   module Store: Irmin.S
+  module Sync: Irmin.SYNC with type db = Store.t
 
   module Backend: sig
     type t = Store.repo

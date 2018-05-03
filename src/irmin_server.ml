@@ -9,6 +9,7 @@ open Hiredis
 
 module type S = sig
   module Store: Irmin.S
+  module Sync: Irmin.SYNC with type db = Store.t
 
   module Backend: sig
     type t = Store.repo
@@ -52,6 +53,7 @@ end
 
 module Make(Store: Irmin.KV) = struct
   module Store = Store
+  module Sync = Irmin.Sync(Store)
 
   module Backend = struct
     type t = Store.repo
@@ -129,6 +131,27 @@ module Make(Store: Irmin.KV) = struct
       Server.ok
     | _ -> Server.error "Invalid arguments"
 
+  and _pull db client cmd args =
+    let rec aux args =
+      let uri, mode = match args with
+      | [| String uri; String merge |] ->
+          let info = `Merge (Irmin_unix.info ~author:"irmin server") in
+          uri, info
+      | [| String uri |] ->
+          uri, `Set
+      | _ -> (* Invalid arguments *)
+          "", `Set
+      in
+      if uri = "" then Server.error "Invalid arguments"
+      else
+        branch db client >>= fun t ->
+        Sync.pull t (Irmin.remote_uri uri) `Set >>= function
+        | Result.Ok _ -> Lwt.return_some (Value.status "OK")
+        | Result.Error (`Msg msg) -> Server.error ("Unable to pull: " ^ msg)
+        | Result.Error _ -> Server.error "Unable to pull"
+    in
+    aux args
+
   and _get db client cmd args =
     match args with
     | [| String key |] ->
@@ -199,6 +222,8 @@ module Make(Store: Irmin.KV) = struct
     "multi", _multi;
     "exec", _exec;
     "discard", _discard;
+
+    "pull", wrap _pull;
 
     "get", wrap _get;
     "set", wrap _set;
