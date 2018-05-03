@@ -21,7 +21,7 @@ module type S = sig
     with module Auth = Resp_server.Auth.String
     and module Backend = Backend
 
-  val commands: (string * Server.command) list
+  val commands: unit -> (string * Server.command) list
   val branch: Backend.t -> Backend.client -> Store.t Lwt.t
 
   val create :
@@ -110,14 +110,15 @@ module Make(Store: Irmin.KV) = struct
     match args with
     | [| |] ->
       client.Backend.in_multi <- false;
+      let cmds = commands () in
       Lwt_list.filter_map_s (fun (cmd, args) ->
-        let f = match cmd with
-        | "get" -> _get
-        | "set" -> _set
-        | "remove" -> _remove
-        | "list" -> _list
-        | _ -> fun db client cmd args -> Lwt.return_none in
-        f db client cmd args) (List.rev client.Backend.queue) >>= fun l ->
+        if cmd = "multi" || cmd = "exec" || cmd = "discard" then
+          Lwt.return_none
+        else
+          match List.assoc_opt cmd cmds with
+          | Some f -> f db client cmd args
+          | None -> Lwt.return_none)
+      (List.rev client.Backend.queue) >>= fun l ->
       client.Backend.queue <- [];
       Lwt.return_some (Value.array (Array.of_list l))
     | _ -> Server.error "Invalid arguments"
@@ -146,7 +147,7 @@ module Make(Store: Irmin.KV) = struct
       else
         branch db client >>= fun t ->
         Sync.pull t (Irmin.remote_uri uri) `Set >>= function
-        | Result.Ok _ -> Lwt.return_some (Value.status "OK")
+        | Result.Ok _ -> Server.ok
         | Result.Error (`Msg msg) -> Server.error ("Unable to pull: " ^ msg)
         | Result.Error _ -> Server.error "Unable to pull"
     in
@@ -176,7 +177,7 @@ module Make(Store: Irmin.KV) = struct
               (match Store.Contents.of_string value with
               | Ok value ->
                   Store.set t ~info:(Irmin_unix.info ~author:"irmin server" "set") key value >>= fun () ->
-                  Lwt.return_some (Value.status "OK")
+                  Server.ok
               | Error (`Msg msg) -> Server.error msg)
           | Error (`Msg msg) -> Server.error msg
       end
@@ -190,13 +191,15 @@ module Make(Store: Irmin.KV) = struct
         match Store.Key.of_string key with
         | Ok key ->
             Store.remove t ~info:(Irmin_unix.info ~author:"irmin server" "del") key >>= fun () ->
-            Lwt.return_some (Value.status "OK")
+            Server.ok
         | Error (`Msg msg) -> Server.error msg
       end
     | _ -> Server.error "Invalid arguments"
 
   and _list db client cmd args =
     match args with
+    | [| String key |] ->
+        _list db client cmd (Array.append [| String "all" |] args)
     | [| String kind; String key; |] ->
       begin
         branch db client >>= fun t ->
@@ -210,15 +213,22 @@ module Make(Store: Irmin.KV) = struct
               | `Contents, "keys" | `Contents, "all" ->
                 Store.Key.pp_step fmt s;
                 Format.pp_print_flush fmt ();
-                Lwt.return_some (String (Buffer.contents buf))
-              | `Node, "dirs" | `Node, "all" -> Lwt.return_none
+                let s' = Buffer.contents buf in
+                let () = Buffer.clear buf in
+                Lwt.return_some (String s')
+              | `Node, "dirs" | `Node, "all" ->
+                Store.Key.pp_step fmt s;
+                Format.pp_print_flush fmt ();
+                let s' = Buffer.contents buf in
+                let () = Buffer.clear buf in
+                Lwt.return_some (String s')
               | _ -> Lwt.return_none) >>= fun l ->
             Lwt.return_some (Hiredis.Value.array (Array.of_list l))
         | Error (`Msg msg) -> Server.error msg
       end
     | _ -> Server.error "Invalid arguments"
 
-  let commands = [
+  and commands () = [
     "multi", _multi;
     "exec", _exec;
     "discard", _discard;
@@ -231,7 +241,7 @@ module Make(Store: Irmin.KV) = struct
     "list", wrap _list;
   ]
 
-  let create = Server.create ~commands ?default:None
+  let create = Server.create ~commands:(commands ()) ?default:None
   let create_custom = Server.create
   let run = Server.run
 end
