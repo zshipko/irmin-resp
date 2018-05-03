@@ -207,21 +207,18 @@ module Make(Store: Irmin.KV) = struct
         | Ok key ->
             let buf = Buffer.create 1024 in
             let fmt = Format.formatter_of_buffer buf in
+            let format_key s =
+                Store.Key.pp_step fmt s;
+                Format.pp_print_flush fmt ();
+                let s' = Buffer.contents buf in
+                let () = Buffer.clear buf in
+                Lwt.return_some (String s')
+            in
             Store.list t key >>=
             Lwt_list.filter_map_s (fun (s, b) ->
               match b, kind with
-              | `Contents, "keys" | `Contents, "all" ->
-                Store.Key.pp_step fmt s;
-                Format.pp_print_flush fmt ();
-                let s' = Buffer.contents buf in
-                let () = Buffer.clear buf in
-                Lwt.return_some (String s')
-              | `Node, "dirs" | `Node, "all" ->
-                Store.Key.pp_step fmt s;
-                Format.pp_print_flush fmt ();
-                let s' = Buffer.contents buf in
-                let () = Buffer.clear buf in
-                Lwt.return_some (String s')
+              | `Contents, "keys" | `Contents, "all" -> format_key s
+              | `Node, "dirs" | `Node, "all" -> format_key s
               | _ -> Lwt.return_none) >>= fun l ->
             Lwt.return_some (Hiredis.Value.array (Array.of_list l))
         | Error (`Msg msg) -> Server.error msg
