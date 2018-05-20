@@ -153,6 +153,27 @@ module Make(Store: Irmin.KV) = struct
     in
     aux args
 
+  and _head db client cmd args =
+    branch db client >>= fun t ->
+    Store.Head.find t >>= function
+    | Some commit ->
+        let s = Store.Commit.hash commit |> Fmt.strf "%a" Store.Commit.Hash.pp in
+        Lwt.return_some (String s)
+    | None -> Lwt.return_some Nil
+
+  and _branch db client cmd args =
+    match args with
+    | [| String "LIST" |] ->
+      begin
+        branch db client >>= fun t ->
+        let repo = Store.repo t in
+        Store.Branch.list repo >>=
+        Lwt_list.map_s (fun x ->
+          Lwt.return (String (Fmt.strf "%a" Store.Branch.pp x))) >>= fun branches ->
+        Lwt.return_some (Array (Array.of_list branches))
+      end
+    | _ -> Server.error "Invalid arguments"
+
   and _get db client cmd args =
     match args with
     | [| String key |] ->
@@ -231,6 +252,8 @@ module Make(Store: Irmin.KV) = struct
     "discard", _discard;
 
     "pull", wrap _pull;
+    "head", wrap _head;
+    "branch", wrap _branch;
 
     "get", wrap _get;
     "set", wrap _set;
