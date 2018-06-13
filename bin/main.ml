@@ -6,8 +6,8 @@ let select_store: string -> (module Irmin.KV_MAKER) = function
   | "http" -> (module Irmin_unix.Http.KV)
   | "fs" -> (module Irmin_unix.FS.KV)
   | "mem" -> (module Irmin_mem.KV)
-  | "git-mem" -> (module Irmin_unix.Git.Mem.KV)
-  | "git-fs" | "git" | _ -> (module Irmin_unix.Git.FS.KV)
+  | "redis" -> (module Irmin_redis.KV)
+  | "git" | _ -> (module Irmin_unix.Git.KV(Irmin_unix.Git.G))
 
 let select_contents: string -> (module Irmin.Contents.S) = function
   | "cstruct" -> (module Irmin.Contents.Cstruct)
@@ -24,7 +24,9 @@ let on_exn exc =
 
 let main addr port root store contents =
   let (module Server) = store_type store contents in
-  let cfg = Irmin_git.config root in
+  let cfg =
+    if store = "redis" then Irmin_redis.config ~port:7000 "127.0.0.1"
+    else Irmin_git.config root in
   Server.Store.Repo.v cfg >>= fun repo ->
   Server.create ~host:addr (`TCP (`Port port)) repo >>= fun server ->
   Server.run ~on_exn server

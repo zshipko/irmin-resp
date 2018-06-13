@@ -62,12 +62,14 @@ module Make(Store: Irmin.KV) = struct
       mutable in_multi: bool;
       mutable queue: (string * Hiredis.value array) list;
       mutable txn: Store.t option;
+      mutable commit_info: (string * string) option;
     }
 
     let new_client _ctx = {
       in_multi = false;
       queue = [];
       txn = None;
+      commit_info = None;
     }
   end
 
@@ -94,12 +96,24 @@ module Make(Store: Irmin.KV) = struct
     else
       f db client cmd args
 
+  let commit_info client ?author:(author="irmin-server") message =
+    let author, message = match client.Backend.commit_info with
+      | Some (a, m) -> a, m
+      | None -> author, message
+    in
+    Irmin_unix.info ~author "%s" message
+
   (* Commands *)
 
   let rec _multi db client cmd args =
     (match args with
     | [| String branch |] ->
         Store.of_branch db branch
+    | [| String branch; String author; String message |] ->
+        client.Backend.commit_info <- Some (author, message);
+        if branch = "master" then
+          Store.master db
+        else Store.of_branch db branch
     | _ ->
         Store.master db) >>= fun t ->
     client.Backend.txn <- Some t;
@@ -120,6 +134,7 @@ module Make(Store: Irmin.KV) = struct
           | None -> Lwt.return_none)
       (List.rev client.Backend.queue) >>= fun l ->
       client.Backend.queue <- [];
+      client.Backend.commit_info <- None;
       Lwt.return_some (Value.array (Array.of_list l))
     | _ -> Server.error "Invalid arguments"
 
@@ -129,6 +144,7 @@ module Make(Store: Irmin.KV) = struct
       client.Backend.in_multi <- false;
       client.Backend.queue <- [];
       client.Backend.txn <- None;
+      client.Backend.commit_info <- None;
       Server.ok
     | _ -> Server.error "Invalid arguments"
 
@@ -136,7 +152,7 @@ module Make(Store: Irmin.KV) = struct
     let rec aux args =
       let uri, mode = match args with
       | [| String uri; String merge |] ->
-          let info = `Merge (Irmin_unix.info ~author:"irmin server") in
+          let info = `Merge (commit_info client ("pull: " ^  uri)) in
           uri, info
       | [| String uri |] ->
           uri, `Set
@@ -193,11 +209,12 @@ module Make(Store: Irmin.KV) = struct
     | [| String key; String value |] ->
       begin
           branch db client >>= fun t ->
+          let info= commit_info client "set" in
           match Store.Key.of_string key with
           | Ok key ->
               (match Store.Contents.of_string value with
               | Ok value ->
-                  Store.set t ~info:(Irmin_unix.info ~author:"irmin server" "set") key value >>= fun () ->
+                  Store.set t ~info key value >>= fun () ->
                   Server.ok
               | Error (`Msg msg) -> Server.error msg)
           | Error (`Msg msg) -> Server.error msg
@@ -209,9 +226,10 @@ module Make(Store: Irmin.KV) = struct
     | [| String key |] ->
       begin
         branch db client >>= fun t ->
+        let info = commit_info client "remove" in
         match Store.Key.of_string key with
         | Ok key ->
-            Store.remove t ~info:(Irmin_unix.info ~author:"irmin server" "del") key >>= fun () ->
+            Store.remove t ~info key >>= fun () ->
             Server.ok
         | Error (`Msg msg) -> Server.error msg
       end
