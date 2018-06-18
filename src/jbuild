@@ -4,4 +4,4 @@
     ((name irmin_server)
      (public_name irmin-server)
      (wrapped false)
-     (libraries (irmin-unix irmin-mem irmin-redis resp-server))))
+     (libraries (irmin-unix irmin-mem resp-server))))

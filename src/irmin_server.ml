@@ -266,7 +266,7 @@ module Make(Store: Irmin.KV) = struct
               | `Contents, "keys" | `Contents, "all" -> format_key s
               | `Node, "dirs" | `Node, "all" -> format_key s
               | _ -> Lwt.return_none) >>= fun l ->
-            Lwt.return_some (Hiredis.Value.array (Array.of_list l))
+            Lwt.return_some (Value.array (Array.of_list l))
         | Error (`Msg msg) -> Server.error msg
       end
     | _ -> Server.error "Invalid arguments"
