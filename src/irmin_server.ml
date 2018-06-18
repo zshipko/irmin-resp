@@ -110,19 +110,22 @@ module Make(Store: Irmin.KV) = struct
   (* Commands *)
 
   let rec _multi db client cmd args =
-    (match args with
-    | [| String branch |] ->
-        Store.of_branch db branch
-    | [| String branch; String author; String message |] ->
-        client.Backend.commit_info <- Some (author, message);
-        if branch = "master" then
-          Store.master db
-        else Store.of_branch db branch
-    | _ ->
-        Store.master db) >>= fun t ->
-    client.Backend.txn <- Some t;
-    client.Backend.in_multi <- true;
-    Server.ok
+    if not client.Backend.in_multi then
+      (match args with
+      | [| String branch |] ->
+          Store.of_branch db branch
+      | [| String branch; String author; String message |] ->
+          client.Backend.commit_info <- Some (author, message);
+          if branch = "master" then
+            Store.master db
+          else Store.of_branch db branch
+      | _ ->
+          Store.master db) >>= fun t ->
+      client.Backend.txn <- Some t;
+      client.Backend.in_multi <- true;
+      Server.ok
+    else
+      Server.ok
 
   and _exec db client cmd args =
     match args with
