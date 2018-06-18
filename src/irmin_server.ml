@@ -94,7 +94,7 @@ module Make(Store: Irmin.KV) = struct
         m
 
   let wrap f db client cmd args =
-    if client.Backend.in_multi && cmd <> "exec" && cmd <> "discard" then
+    if client.Backend.in_multi && cmd <> "multi" && cmd <> "exec" && cmd <> "discard" then
       let () = client.Backend.queue <- (cmd, args) :: client.Backend.queue in
       Server.ok
     else
@@ -113,7 +113,9 @@ module Make(Store: Irmin.KV) = struct
     if not client.Backend.in_multi then
       (match args with
       | [| String branch |] ->
-          Store.of_branch db branch
+          if branch = "master" then
+            Store.master db
+          else Store.of_branch db branch
       | [| String branch; String author; String message |] ->
           client.Backend.commit_info <- Some (author, message);
           if branch = "master" then
@@ -142,6 +144,7 @@ module Make(Store: Irmin.KV) = struct
       (List.rev client.Backend.queue) >>= fun l ->
       client.Backend.queue <- [];
       client.Backend.commit_info <- None;
+      client.Backend.txn <- None;
       Lwt.return_some (Value.array (Array.of_list l))
     | _ -> Server.error "Invalid arguments"
 
