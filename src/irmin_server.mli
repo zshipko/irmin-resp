@@ -33,7 +33,7 @@ module type S = sig
     Backend.t ->
     Server.t Lwt.t
 
-  val run :
+  val start:
     ?backlog: int ->
     ?timeout: int ->
     ?stop: unit Lwt.t ->

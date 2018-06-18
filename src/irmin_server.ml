@@ -5,7 +5,8 @@
   ---------------------------------------------------------------------------*)
 
 open Lwt.Infix
-open Hiredis
+open Resp_server
+open Value
 
 module type S = sig
   module Store: Irmin.S
@@ -42,7 +43,7 @@ module type S = sig
     Backend.t ->
     Server.t Lwt.t
 
-  val run :
+  val start:
     ?backlog: int ->
     ?timeout: int ->
     ?stop: unit Lwt.t ->
@@ -60,7 +61,7 @@ module Make(Store: Irmin.KV) = struct
 
     type client = {
       mutable in_multi: bool;
-      mutable queue: (string * Hiredis.value array) list;
+      mutable queue: (string * Value.t array) list;
       mutable txn: Store.t option;
       mutable commit_info: (string * string) option;
     }
@@ -87,7 +88,10 @@ module Make(Store: Irmin.KV) = struct
   let branch db client =
     match client.Backend.txn with
     | Some t -> Lwt.return t
-    | None -> Store.master db
+    | None ->
+        Store.master db >|= fun m ->
+        client.Backend.txn <- Some m;
+        m
 
   let wrap f db client cmd args =
     if client.Backend.in_multi && cmd <> "exec" && cmd <> "discard" then
@@ -209,7 +213,7 @@ module Make(Store: Irmin.KV) = struct
     | [| String key; String value |] ->
       begin
           branch db client >>= fun t ->
-          let info= commit_info client "set" in
+          let info = commit_info client "set" in
           match Store.Key.of_string key with
           | Ok key ->
               (match Store.Contents.of_string value with
@@ -281,7 +285,7 @@ module Make(Store: Irmin.KV) = struct
 
   let create = Server.create ~commands:(commands ()) ?default:None
   let create_custom = Server.create
-  let run = Server.run
+  let start = Server.start
 end
 
 (*---------------------------------------------------------------------------

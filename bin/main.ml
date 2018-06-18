@@ -29,7 +29,7 @@ let main addr port root store contents =
     else Irmin_git.config root in
   Server.Store.Repo.v cfg >>= fun repo ->
   Server.create ~host:addr (`TCP (`Port port)) repo >>= fun server ->
-  Server.run ~on_exn server
+  Server.start ~on_exn server
 
 let server addr port root store contents =
   let store = String.lowercase_ascii store in
