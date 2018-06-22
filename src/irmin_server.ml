@@ -62,15 +62,17 @@ module Make(Store: Irmin.KV) = struct
     type client = {
       mutable in_multi: bool;
       mutable queue: (string * Value.t array) list;
-      mutable txn: Store.t option;
+      mutable branch: Store.t option;
       mutable commit_info: (string * string) option;
+      mutable tree: Store.tree option;
     }
 
     let new_client _ctx = {
       in_multi = false;
       queue = [];
-      txn = None;
+      branch = None;
       commit_info = None;
+      tree = None;
     }
   end
 
@@ -86,19 +88,17 @@ module Make(Store: Irmin.KV) = struct
     Buffer.contents buffer
 
   let branch db client =
-    match client.Backend.txn with
+    match client.Backend.branch with
     | Some t -> Lwt.return t
     | None ->
         Store.master db >|= fun m ->
-        client.Backend.txn <- Some m;
+        client.Backend.branch <- Some m;
         m
 
-  let wrap f db client cmd args =
-    if client.Backend.in_multi && cmd <> "multi" && cmd <> "exec" && cmd <> "discard" then
-      let () = client.Backend.queue <- (cmd, args) :: client.Backend.queue in
-      Server.ok
-    else
-      f db client cmd args
+  let tree db client =
+    match client.Backend.tree with
+    | Some tree -> Lwt.return tree
+    | None -> Store.tree db
 
   let commit_info client ?author:(author="irmin-server") message =
     let author, message = match client.Backend.commit_info with
@@ -106,6 +106,19 @@ module Make(Store: Irmin.KV) = struct
       | None -> author, message
     in
     Irmin_unix.info ~author "%s" message
+
+  let wrap f db client cmd args =
+    if client.Backend.in_multi && cmd <> "multi" && cmd <> "exec" && cmd <> "discard" then
+      let () = client.Backend.queue <- (cmd, args) :: client.Backend.queue in
+      Server.ok
+    else
+      f db client cmd args >>= fun res ->
+      (match client.Backend.tree with
+      | Some tree ->
+          let info = commit_info client "exec"  in
+          branch db client >>= fun t ->
+          Store.set_tree t Store.Key.empty tree ~info
+      | None -> Lwt.return_unit) >|= fun () -> res
 
   (* Commands *)
 
@@ -123,7 +136,7 @@ module Make(Store: Irmin.KV) = struct
           else Store.of_branch db branch
       | _ ->
           Store.master db) >>= fun t ->
-      client.Backend.txn <- Some t;
+      client.Backend.branch <- Some t;
       client.Backend.in_multi <- true;
       Server.ok
     else
@@ -134,6 +147,9 @@ module Make(Store: Irmin.KV) = struct
     | [| |] ->
       client.Backend.in_multi <- false;
       let cmds = commands () in
+      branch db client >>= fun t ->
+      Store.tree t >>= fun tree ->
+      client.Backend.tree <- Some tree;
       Lwt_list.filter_map_s (fun (cmd, args) ->
         if cmd = "multi" || cmd = "exec" || cmd = "discard" then
           Lwt.return_none
@@ -142,9 +158,15 @@ module Make(Store: Irmin.KV) = struct
           | Some f -> f db client cmd args
           | None -> Lwt.return_none)
       (List.rev client.Backend.queue) >>= fun l ->
+      (match client.Backend.tree with
+      | Some tree ->
+          let info = commit_info client "exec"  in
+          Store.set_tree t Store.Key.empty tree ~info
+      | None -> Lwt.return_unit) >>= fun () ->
       client.Backend.queue <- [];
       client.Backend.commit_info <- None;
-      client.Backend.txn <- None;
+      client.Backend.branch <- None;
+      client.Backend.tree <- None;
       Lwt.return_some (Value.array (Array.of_list l))
     | _ -> Server.error "Invalid arguments"
 
@@ -153,8 +175,9 @@ module Make(Store: Irmin.KV) = struct
     | [| |] ->
       client.Backend.in_multi <- false;
       client.Backend.queue <- [];
-      client.Backend.txn <- None;
+      client.Backend.branch <- None;
       client.Backend.commit_info <- None;
+      client.Backend.tree <- None;
       Server.ok
     | _ -> Server.error "Invalid arguments"
 
@@ -172,7 +195,7 @@ module Make(Store: Irmin.KV) = struct
       if uri = "" then Server.error "Invalid arguments"
       else
         branch db client >>= fun t ->
-        Sync.pull t (Irmin.remote_uri uri) `Set >>= function
+        Sync.pull t (Irmin.remote_uri uri) mode >>= function
         | Result.Ok _ -> Server.ok
         | Result.Error (`Msg msg) -> Server.error ("Unable to pull: " ^ msg)
         | Result.Error _ -> Server.error "Unable to pull"
@@ -205,9 +228,10 @@ module Make(Store: Irmin.KV) = struct
     | [| String key |] ->
       begin
         branch db client >>= fun t ->
+        tree t client >>= fun tree ->
         match Store.Key.of_string key with
         | Ok key ->
-          (Store.find t key >>= function
+          (Store.Tree.find tree key >>= function
             | Some x -> Lwt.return_some (Value.string (to_string x))
             | None -> Lwt.return_some Value.nil)
         | Error (`Msg msg) -> Lwt.return_some (Value.error ("ERR " ^ msg))
@@ -219,12 +243,13 @@ module Make(Store: Irmin.KV) = struct
     | [| String key; String value |] ->
       begin
           branch db client >>= fun t ->
-          let info = commit_info client "set" in
+          tree t client >>= fun tree ->
           match Store.Key.of_string key with
           | Ok key ->
               (match Store.Contents.of_string value with
               | Ok value ->
-                  Store.set t ~info key value >>= fun () ->
+                  Store.Tree.add tree key value >>= fun tree ->
+                  client.Backend.tree <- Some tree;
                   Server.ok
               | Error (`Msg msg) -> Server.error msg)
           | Error (`Msg msg) -> Server.error msg
@@ -236,10 +261,11 @@ module Make(Store: Irmin.KV) = struct
     | [| String key |] ->
       begin
         branch db client >>= fun t ->
-        let info = commit_info client "remove" in
+        tree t client >>= fun tree ->
         match Store.Key.of_string key with
         | Ok key ->
-            Store.remove t ~info key >>= fun () ->
+            Store.Tree.remove tree key >>= fun tree ->
+            client.Backend.tree <- Some tree;
             Server.ok
         | Error (`Msg msg) -> Server.error msg
       end
@@ -252,6 +278,7 @@ module Make(Store: Irmin.KV) = struct
     | [| String kind; String key; |] ->
       begin
         branch db client >>= fun t ->
+        tree t client >>= fun tree ->
         match Store.Key.of_string key with
         | Ok key ->
             let buf = Buffer.create 1024 in
@@ -263,7 +290,7 @@ module Make(Store: Irmin.KV) = struct
                 let () = Buffer.clear buf in
                 Lwt.return_some (String s')
             in
-            Store.list t key >>=
+            Store.Tree.list tree key >>=
             Lwt_list.filter_map_s (fun (s, b) ->
               match b, kind with
               | `Contents, "keys" | `Contents, "all" -> format_key s
