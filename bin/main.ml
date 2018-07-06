@@ -2,20 +2,11 @@ open Lwt.Infix
 open Irmin_server
 open Cmdliner
 
-let select_store: string -> (module Irmin.KV_MAKER) = function
-  | "http" -> (module Irmin_unix.Http.KV)
-  | "fs" -> (module Irmin_unix.FS.KV)
-  | "mem" -> (module Irmin_mem.KV)
-  | "git" | _ -> (module Irmin_unix.Git.KV(Irmin_unix.Git.G))
-
-let select_contents: string -> (module Irmin.Contents.S) = function
-  | "cstruct" -> (module Irmin.Contents.Cstruct)
-  | _ -> (module Irmin.Contents.String)
-
 let store_type s c: (module S) =
-  let (module MakeStore) = select_store s in
-  let (module T) = select_contents c in
-  (module Make(MakeStore(T)))
+  let mk: (module Irmin.Contents.S) -> (module Irmin.S) = Irmin_unix.Cli.mk_store s in
+  let t = Irmin_unix.Cli.mk_contents c in
+  let (module Store) = mk t in
+  (module Make(Store))
 
 let on_exn exc =
   print_string "Error: ";
@@ -51,7 +42,7 @@ let contents =
 
 let store =
   let doc = "Backend store type" in
-  Arg.(value & opt string "git-fs" & info ["s"; "store"] ~doc ~docv:"STORE")
+  Arg.(value & opt string "git" & info ["s"; "store"] ~doc ~docv:"STORE")
 
 let server_t = Term.(const server $ addr $ port $ root $ store $ contents)
 let cmd = Term.info "irmin-server" ~version:"v0.1" ~exits:Term.default_exits

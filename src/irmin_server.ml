@@ -52,7 +52,7 @@ module type S = sig
     unit Lwt.t
 end
 
-module Make(Store: Irmin.KV) = struct
+module Make(Store: Irmin.S) = struct
   module Store = Store
   module Sync = Irmin.Sync(Store)
 
@@ -123,24 +123,32 @@ module Make(Store: Irmin.KV) = struct
   (* Commands *)
 
   let rec _multi db client cmd args =
-    if not client.Backend.in_multi then
-      (match args with
-      | [| String branch |] ->
-          if branch = "master" then
-            Store.master db
-          else Store.of_branch db branch
-      | [| String branch; String author; String message |] ->
-          client.Backend.commit_info <- Some (author, message);
-          if branch = "master" then
-            Store.master db
-          else Store.of_branch db branch
-      | _ ->
-          Store.master db) >>= fun t ->
-      client.Backend.branch <- Some t;
-      client.Backend.in_multi <- true;
-      Server.ok
-    else
-      Server.ok
+    let get_branch branch =
+        if branch = "master" then
+          Store.master db
+        else
+          (match Store.Branch.of_string branch with
+          | Ok branch -> Store.of_branch db branch
+          | Error (`Msg msg) -> failwith msg)
+    in
+    Lwt.catch (fun () ->
+      if not client.Backend.in_multi then
+        (match args with
+        | [| String branch |] ->
+            get_branch branch
+        | [| String branch; String author; String message |] ->
+            client.Backend.commit_info <- Some (author, message);
+            get_branch branch
+        | _ ->
+            Store.master db) >>= fun t ->
+        client.Backend.branch <- Some t;
+        client.Backend.in_multi <- true;
+        Server.ok
+      else
+        Server.ok)
+    (function
+      | Failure msg -> Server.error msg
+      | exn -> raise exn)
 
   and _exec db client cmd args =
     match args with
@@ -314,6 +322,8 @@ module Make(Store: Irmin.KV) = struct
     "set", wrap _set;
     "remove", wrap _remove;
     "list", wrap _list;
+    (*"metadata", wrap _metadata;*)
+    (*"kind", wrap _kind;*)
   ]
 
   let create = Server.create ~commands:(commands ()) ?default:None

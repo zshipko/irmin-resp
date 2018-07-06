@@ -42,5 +42,5 @@ module type S = sig
     unit Lwt.t
 end
 
-module Make(I: Irmin.KV): S with module Store = I and type Backend.t = I.repo
+module Make(I: Irmin.S): S with module Store = I and type Backend.t = I.repo
 
