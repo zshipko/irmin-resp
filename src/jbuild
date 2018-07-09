@@ -2,6 +2,6 @@
 
 (library
     ((name irmin_server)
-     (public_name irmin-server)
+     (public_name irmin-resp)
      (wrapped false)
      (libraries (irmin-unix irmin-mem resp-server))))

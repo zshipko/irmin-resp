@@ -1,5 +1,5 @@
 open Lwt.Infix
-open Irmin_server
+open Irmin_resp
 open Cmdliner
 
 let store_type s c: (module S) =

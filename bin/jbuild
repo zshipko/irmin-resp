@@ -2,7 +2,7 @@
 
 (executables
  ((names (main))
-  (public_names (irmin-server))
+  (public_names (irmin-rest))
   (modules (main))
-  (libraries (irmin-server cmdliner))
-  (package irmin-server)))
+  (libraries (irmin-resp cmdliner))
+  (package irmin-resp)))

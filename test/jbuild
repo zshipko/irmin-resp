@@ -1,12 +1,12 @@
 (jbuild_version 1)
 
 (executables
-    ((libraries (irmin-server))
+    ((libraries (irmin-resp))
      (names (test))
      (modules (test))))
 
 (alias
     ((name runtest)
-     (package irmin-server)
+     (package irmin-resp)
      (deps (test.exe))
      (action (run ${<}))))

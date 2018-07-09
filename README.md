@@ -1,18 +1,18 @@
-irmin-server — A lightweight server for Irmin
+irmin-resp — A lightweight server for Irmin
 -------------------------------------------------------------------------------
 %%VERSION%%
 
-irmin-server is a Redis protocol server for [Irmin](https://github.com/mirage/irmin) using [resp-server](https://github.com/zshipko/resp-server)
+irmin-resp is a Redis protocol server for [Irmin](https://github.com/mirage/irmin) using [resp-server](https://github.com/zshipko/resp-server)
 
-irmin-server is distributed under the ISC license.
+irmin-resp is distributed under the ISC license.
 
-Homepage: https://github.com/zshipko/irmin-server
+Homepage: https://github.com/zshipko/irmin-resp
 
 ## Installation
 
-irmin-server can be installed with `opam`:
+irmin-resp can be installed with `opam`:
 
-    opam install irmin-server
+    opam install irmin-resp
 
 If you don't use `opam` consult the [`opam`](opam) file for build
 instructions.
@@ -21,9 +21,9 @@ instructions.
 
 The documentation and API reference is generated from the source
 interfaces. It can be consulted [online][doc] or via `odig doc
-irmin-server`.
+irmin-resp`.
 
-[doc]: https://github.com/zshipko/irmin-server
+[doc]: https://github.com/zshipko/irmin-resp
 
 ## Tests
 
