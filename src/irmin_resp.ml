@@ -100,7 +100,7 @@ module Make(Store: Irmin.S) = struct
     | Some tree -> Lwt.return tree
     | None -> Store.tree db
 
-  let commit_info client ?author:(author="irmin-server") message =
+  let commit_info client ?author:(author="irmin-resp") message =
     let author, message = match client.Backend.commit_info with
       | Some (a, m) -> a, m
       | None -> author, message

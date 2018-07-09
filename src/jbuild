@@ -1,7 +1,7 @@
 (jbuild_version 1)
 
 (library
-    ((name irmin_server)
+    ((name irmin_resp)
      (public_name irmin-resp)
      (wrapped false)
      (libraries (irmin-unix irmin-mem resp-server))))

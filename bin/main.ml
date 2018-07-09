@@ -45,5 +45,5 @@ let store =
   Arg.(value & opt string "git" & info ["s"; "store"] ~doc ~docv:"STORE")
 
 let server_t = Term.(const server $ addr $ port $ root $ store $ contents)
-let cmd = Term.info "irmin-server" ~version:"v0.1" ~exits:Term.default_exits
+let cmd = Term.info "irmin-resp" ~version:"v0.1" ~exits:Term.default_exits
 let () = Term.exit @@ Term.eval (server_t, cmd)
