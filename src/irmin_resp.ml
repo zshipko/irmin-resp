@@ -248,6 +248,24 @@ module Make(Store: Irmin.S) = struct
       end
     | _ -> Server.error "Invalid arguments"
 
+  and _getall db client _cmd args =
+    match args with
+    | [| String key |] ->
+      begin
+        branch db client >>= fun t ->
+        tree t client >>= fun tree ->
+        match Store.Key.of_string key with
+        | Ok key ->
+          (Store.Tree.find_all tree key >>= function
+            | Some (x, m) ->
+                let a = Value.string (to_string x) in
+                let b = Value.string (Fmt.to_to_string (Irmin.Type.pp_json Store.Metadata.t) m) in
+                Lwt.return_some (Value.array [| a; b |])
+            | None -> Lwt.return_some Value.nil)
+        | Error (`Msg msg) -> Lwt.return_some (Value.error ("ERR " ^ msg))
+      end
+    | _ -> Server.error "Invalid arguments"
+
   and _set db client _cmd args =
     match args with
     | [| String key; String value |] ->
@@ -313,11 +331,10 @@ module Make(Store: Irmin.S) = struct
     "branch", wrap _branch;
 
     "get", wrap _get;
+    "getall", wrap _getall;
     "set", wrap _set;
     "remove", wrap _remove;
     "list", wrap _list;
-    (*"metadata", wrap _metadata;*)
-    (*"kind", wrap _kind;*)
   ]
 
   let create = Server.create ~commands:(commands ()) ?default:None
