@@ -122,7 +122,7 @@ module Make(Store: Irmin.S) = struct
 
   (* Commands *)
 
-  let rec _multi db client cmd args =
+  let rec _multi db client _cmd args =
     let get_branch branch =
         if branch = "master" then
           Store.master db
@@ -150,7 +150,7 @@ module Make(Store: Irmin.S) = struct
       | Failure msg -> Server.error msg
       | exn -> raise exn)
 
-  and _exec db client cmd args =
+  and _exec db client _cmd args =
     match args with
     | [| |] ->
       client.Backend.in_multi <- false;
@@ -178,7 +178,7 @@ module Make(Store: Irmin.S) = struct
       Lwt.return_some (Value.array (Array.of_list l))
     | _ -> Server.error "Invalid arguments"
 
-  and _discard db client cmd args =
+  and _discard _db client _cmd args =
     match args with
     | [| |] ->
       client.Backend.in_multi <- false;
@@ -189,11 +189,13 @@ module Make(Store: Irmin.S) = struct
       Server.ok
     | _ -> Server.error "Invalid arguments"
 
-  and _pull db client cmd args =
-    let rec aux args =
+  and _pull db client _cmd args =
+    let aux args =
       let uri, mode = match args with
       | [| String uri; String merge |] ->
-          let info = `Merge (commit_info client ("pull: " ^  uri)) in
+          let info = if String.lowercase_ascii merge = "merge" then
+            `Merge (commit_info client ("pull: " ^  uri))
+          else `Set in
           uri, info
       | [| String uri |] ->
           uri, `Set
@@ -210,7 +212,7 @@ module Make(Store: Irmin.S) = struct
     in
     aux args
 
-  and _head db client cmd args =
+  and _head db client _cmd _args =
     branch db client >>= fun t ->
     Store.Head.find t >>= function
     | Some commit ->
@@ -218,7 +220,7 @@ module Make(Store: Irmin.S) = struct
         Lwt.return_some (String s)
     | None -> Lwt.return_some Nil
 
-  and _branch db client cmd args =
+  and _branch db client _cmd args =
     match args with
     | [| String "LIST" |] ->
       begin
@@ -231,7 +233,7 @@ module Make(Store: Irmin.S) = struct
       end
     | _ -> Server.error "Invalid arguments"
 
-  and _get db client cmd args =
+  and _get db client _cmd args =
     match args with
     | [| String key |] ->
       begin
@@ -246,7 +248,7 @@ module Make(Store: Irmin.S) = struct
       end
     | _ -> Server.error "Invalid arguments"
 
-  and _set db client cmd args =
+  and _set db client _cmd args =
     match args with
     | [| String key; String value |] ->
       begin
@@ -264,7 +266,7 @@ module Make(Store: Irmin.S) = struct
       end
     | _ -> Server.error "Invalid arguments"
 
-  and _remove db client cmd args =
+  and _remove db client _cmd args =
     match args with
     | [| String key |] ->
       begin
@@ -281,7 +283,7 @@ module Make(Store: Irmin.S) = struct
 
   and _list db client cmd args =
     match args with
-    | [| String key |] ->
+    | [| String _ |] ->
         _list db client cmd (Array.append [| String "all" |] args)
     | [| String kind; String key; |] ->
       begin
@@ -289,15 +291,7 @@ module Make(Store: Irmin.S) = struct
         tree t client >>= fun tree ->
         match Store.Key.of_string key with
         | Ok key ->
-            let buf = Buffer.create 1024 in
-            let fmt = Format.formatter_of_buffer buf in
-            let format_key s =
-                Store.Key.pp_step fmt s;
-                Format.pp_print_flush fmt ();
-                let s' = Buffer.contents buf in
-                let () = Buffer.clear buf in
-                Lwt.return_some (String s')
-            in
+            let format_key s = Lwt.return_some (String (Fmt.to_to_string Store.Key.pp_step s)) in
             Store.Tree.list tree key >>=
             Lwt_list.filter_map_s (fun (s, b) ->
               match b, kind with
