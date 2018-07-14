@@ -92,7 +92,7 @@ module Make(Store: Irmin.S) = struct
     | Some t -> Lwt.return t
     | None ->
         Store.master db >|= fun m ->
-        client.Backend.branch <- Some m;
+        (*client.Backend.branch <- Some m;*)
         m
 
   let tree db client =
@@ -128,8 +128,8 @@ module Make(Store: Irmin.S) = struct
           Store.master db
         else
           (match Store.Branch.of_string branch with
-          | Ok branch -> Store.of_branch db branch
-          | Error (`Msg msg) -> failwith msg)
+            | Ok branch -> Store.of_branch db branch
+            | Error (`Msg msg) -> failwith msg)
     in
     Lwt.catch (fun () ->
       if not client.Backend.in_multi then
@@ -167,9 +167,10 @@ module Make(Store: Irmin.S) = struct
           let info = commit_info client "exec"  in
           Store.set_tree t Store.Key.empty tree ~info
       | None -> Lwt.return_unit) >>= fun () ->
+      Store.master db >>= fun m ->
+      client.Backend.branch <- Some m;
       client.Backend.queue <- [];
       client.Backend.commit_info <- None;
-      client.Backend.branch <- None;
       client.Backend.tree <- None;
       Lwt.return_some (Value.array (Array.of_list l))
     in
