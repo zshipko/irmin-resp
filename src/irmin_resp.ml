@@ -136,9 +136,6 @@ module Make(Store: Irmin.S) = struct
         (match args with
         | [| String branch |] ->
             get_branch branch
-        | [| String branch; String author; String message |] ->
-            client.Backend.commit_info <- Some (author, message);
-            get_branch branch
         | _ ->
             Store.master db) >>= fun t ->
         client.Backend.branch <- Some t;
@@ -151,8 +148,7 @@ module Make(Store: Irmin.S) = struct
       | exn -> raise exn)
 
   and _exec db client _cmd args =
-    match args with
-    | [| |] ->
+    let exec () =
       client.Backend.in_multi <- false;
       let cmds = commands () in
       branch db client >>= fun t ->
@@ -176,6 +172,12 @@ module Make(Store: Irmin.S) = struct
       client.Backend.branch <- None;
       client.Backend.tree <- None;
       Lwt.return_some (Value.array (Array.of_list l))
+    in
+    match args with
+    | [| String author; String message |] ->
+        client.Backend.commit_info <- Some (author, message);
+        exec ()
+    | [||] -> exec ()
     | _ -> Server.error "Invalid arguments"
 
   and _discard _db client _cmd args =
@@ -189,28 +191,57 @@ module Make(Store: Irmin.S) = struct
       Server.ok
     | _ -> Server.error "Invalid arguments"
 
+  (* NOTE: pull cannot be used as part of a transaction *)
   and _pull db client _cmd args =
-    let aux args =
-      let uri, mode = match args with
-      | [| String uri; String merge |] ->
-          let info = if String.lowercase_ascii merge = "merge" then
-            `Merge (commit_info client ("pull: " ^  uri))
-          else `Set in
-          uri, info
-      | [| String uri |] ->
-          uri, `Set
-      | _ -> (* Invalid arguments *)
-          "", `Set
-      in
-      if uri = "" then Server.error "Invalid arguments"
-      else
+    let pull uri mode =
         branch db client >>= fun t ->
         Sync.pull t (Irmin.remote_uri uri) mode >>= function
         | Result.Ok _ -> Server.ok
         | Result.Error (`Msg msg) -> Server.error ("Unable to pull: " ^ msg)
-        | Result.Error _ -> Server.error "Unable to pull"
+        | Result.Error _ -> Server.error ("Unable to pull from " ^ uri)
     in
-    aux args
+    match args with
+    | [| String uri; String merge |] ->
+        let mode = if String.lowercase_ascii merge = "merge" then
+          `Merge (commit_info client ("pull: " ^  uri))
+        else `Set in
+        pull uri mode
+    | [| String uri |] ->
+        pull uri `Set
+    | _ -> (* Invalid arguments *)
+        Server.error "Invalid arguments"
+
+  (* NOTE: merge cannot be used as part of a transaction *)
+  and _merge db client _cmd args =
+    let merge name info =
+        match Store.Branch.of_string name with
+        | Ok from ->
+          branch db client >>= fun t ->
+          Store.merge_with_branch t from ~info >>= (function
+            | Ok () -> Server.ok
+            | Error conflict ->
+                let pp = Irmin.Type.pp_json Irmin.Merge.conflict_t in
+                let s = Fmt.to_to_string pp conflict in
+                Server.error s)
+        | Error (`Msg msg) -> Server.error msg
+    in
+    match args with
+    | [| String name |] ->
+        let info = Irmin_unix.info  "merge %s" name in
+        merge name info
+    | [| String name; String author; String message |] ->
+        let info = Irmin_unix.info ~author "%s" message in
+        merge name info
+    | _ -> Server.error "Invalid arguments"
+
+  and _push db client _cmd args =
+    match args with
+    | [| String uri |] ->
+        branch db client >>= fun t ->
+        (Sync.push t (Irmin.remote_uri uri) >>= function
+          | Ok () -> Server.ok
+          | Error err -> Server.error @@ Fmt.to_to_string Sync.pp_push_error err)
+    | _ -> Server.error "Invalid arguments"
 
   and _head db client _cmd _args =
     branch db client >>= fun t ->
@@ -222,7 +253,7 @@ module Make(Store: Irmin.S) = struct
 
   and _branch db client _cmd args =
     match args with
-    | [| String "LIST" |] ->
+    | [| String s |] when String.lowercase_ascii s = "list" ->
       begin
         branch db client >>= fun t ->
         let repo = Store.repo t in
@@ -267,21 +298,35 @@ module Make(Store: Irmin.S) = struct
     | _ -> Server.error "Invalid arguments"
 
   and _set db client _cmd args =
+    let set key value metadata =
+      branch db client >>= fun t ->
+      tree t client >>= fun tree ->
+      match Store.Key.of_string key with
+      | Ok key ->
+          let metadata =
+            match metadata with
+            | None -> None
+            | Some metadata ->
+              let decoder = Jsonm.decoder (`String metadata) in
+              Some (Irmin.Type.decode_json Store.Metadata.t decoder)
+          in
+          (match Store.Contents.of_string value, metadata with
+          | Ok value, None ->
+              Store.Tree.add tree key value >>= fun tree ->
+              client.Backend.tree <- Some tree;
+              Server.ok
+          | Ok value, Some (Ok metadata) ->
+              Store.Tree.add tree key ~metadata value >>= fun tree ->
+              client.Backend.tree <- Some tree;
+              Server.ok
+          | Error (`Msg msg), _ | _, Some (Error (`Msg msg)) -> Server.error msg)
+      | Error (`Msg msg) -> Server.error msg
+    in
     match args with
     | [| String key; String value |] ->
-      begin
-          branch db client >>= fun t ->
-          tree t client >>= fun tree ->
-          match Store.Key.of_string key with
-          | Ok key ->
-              (match Store.Contents.of_string value with
-              | Ok value ->
-                  Store.Tree.add tree key value >>= fun tree ->
-                  client.Backend.tree <- Some tree;
-                  Server.ok
-              | Error (`Msg msg) -> Server.error msg)
-          | Error (`Msg msg) -> Server.error msg
-      end
+        set key value None
+    | [| String key; String value; String metadata |] ->
+        set key value (Some metadata)
     | _ -> Server.error "Invalid arguments"
 
   and _remove db client _cmd args =
@@ -326,8 +371,10 @@ module Make(Store: Irmin.S) = struct
     "exec", _exec;
     "discard", _discard;
 
-    "pull", wrap _pull;
-    "head", wrap _head;
+    "pull", _pull;
+    "push", _push;
+    "merge", _merge;
+    "head", _head;
     "branch", wrap _branch;
 
     "get", wrap _get;
