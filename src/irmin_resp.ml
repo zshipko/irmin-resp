@@ -91,9 +91,7 @@ module Make(Store: Irmin.S) = struct
     match client.Backend.branch with
     | Some t -> Lwt.return t
     | None ->
-        Store.master db >|= fun m ->
-        (*client.Backend.branch <- Some m;*)
-        m
+        Store.master db
 
   let tree db client =
     match client.Backend.tree with
@@ -212,6 +210,21 @@ module Make(Store: Irmin.S) = struct
     | _ -> (* Invalid arguments *)
         Server.error "Invalid arguments"
 
+  (* NOTE: clone cannot be used as part of a transaction *)
+  and _clone db client _cmd args =
+    let fetch uri =
+        branch db client >>= fun t ->
+        Sync.fetch t (Irmin.remote_uri uri) >>= function
+        | Result.Ok _ -> Server.ok
+        | Result.Error (`Msg msg) -> Server.error ("Unable to pull: " ^ msg)
+        | Result.Error _ -> Server.error ("Unable to pull from " ^ uri)
+    in
+    match args with
+    | [| String uri |] ->
+        fetch uri
+    | _ -> (* Invalid arguments *)
+        Server.error "Invalid arguments"
+
   (* NOTE: merge cannot be used as part of a transaction *)
   and _merge db client _cmd args =
     let merge name info =
@@ -252,6 +265,29 @@ module Make(Store: Irmin.S) = struct
         Lwt.return_some (String s)
     | None -> Lwt.return_some Nil
 
+  and _history db client _cmd _args =
+    branch db client >>= fun t ->
+    Store.history t >>= fun history ->
+    let l = Store.History.fold_vertex (fun commit acc ->
+      String (Fmt.to_to_string Store.Commit.Hash.pp (Store.Commit.hash commit)) :: acc) history []
+    in Lwt.return_some (Array (Array.of_list l))
+
+  and _revert db client _cmd args =
+    branch db client >>= fun t ->
+    match args with
+    | [| String hash |] ->
+        (match Store.Commit.Hash.of_string hash with
+        | Ok hash ->
+            (Store.Commit.of_hash (Store.repo t) hash  >>= function
+            | Some commit ->
+                Store.Head.set t commit >>= fun () ->
+                Server.ok
+            | None ->
+                Server.error "Invalid commit")
+        | Error (`Msg err) ->
+            Server.error err)
+    | _ -> Server.error "Invalid arguments"
+
   and _branch db client _cmd args =
     match args with
     | [| String s |] when String.lowercase_ascii s = "list" ->
@@ -263,6 +299,12 @@ module Make(Store: Irmin.S) = struct
           Lwt.return (String (Fmt.strf "%a" Store.Branch.pp x))) >>= fun branches ->
         Lwt.return_some (Array (Array.of_list branches))
       end
+    | [| String s; String name |] when String.lowercase_ascii s = "set" ->
+        (match Store.Branch.of_string name with
+        | Ok b ->
+            Store.of_branch db b >>= fun t ->
+            client.Backend.branch <- Some t; Server.ok
+        | Error (`Msg msg) -> Server.error msg)
     | _ -> Server.error "Invalid arguments"
 
   and _get db client _cmd args =
@@ -373,10 +415,13 @@ module Make(Store: Irmin.S) = struct
     "discard", _discard;
 
     "pull", _pull;
+    "clone", _clone;
     "push", _push;
     "merge", _merge;
     "head", _head;
     "branch", wrap _branch;
+    "revert", _revert;
+    "history", _history;
 
     "get", wrap _get;
     "getall", wrap _getall;
