@@ -270,7 +270,7 @@ module Make(Store: Irmin.S) = struct
     Store.history t >>= fun history ->
     let l = Store.History.fold_vertex (fun commit acc ->
       String (Fmt.to_to_string Store.Commit.Hash.pp (Store.Commit.hash commit)) :: acc) history []
-    in Lwt.return_some (Array (Array.of_list l))
+    in Lwt.return_some (Array (Array.of_list (List.rev l)))
 
   and _revert db client _cmd args =
     branch db client >>= fun t ->
