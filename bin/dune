@@ -1,0 +1,6 @@
+(executables
+    (names main)
+    (public_names irmin-resp)
+    (modules main)
+    (libraries irmin-resp cmdliner)
+    (package irmin-resp))
